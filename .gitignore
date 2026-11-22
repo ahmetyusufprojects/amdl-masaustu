@@ -1,0 +1,19 @@
+# Yerel oturum, yapılandırma, motorlar ve çıktılar
+config.y*ml
+ui.y*ml
+.env*
+*.img
+*.qcow2
+*.log
+*.zip
+*.json
+2fa.txt
+*TOKEN*
+.lite-qemu-args
+.oturum.lock
+amdl
+wrapper-lite/
+AM-*/
+__pycache__/
+*.py[cod]
+.venv/
