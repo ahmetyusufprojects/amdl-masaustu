@@ -1,5 +1,13 @@
 # Sürüm notları
 
+## v0.1.2 — Windows giriş bağlantısı
+
+- Windows’ta QEMU giriş bağlantısı yerel adlandırılmış boruya taşındı. Linux aynı seri bağlantıyı kullanmaya devam ediyor.
+- Başlatıcı ve arayüz, eksik `app/`, Python, GTK veya QEMU bileşenlerini dosya adıyla bildirir.
+- **Windows güncellemesi:** Uygulamayı kapat. ZIP’i çıkar, içindeki `app/` ve `amdl-masaustu.exe` dosyasını mevcut taşınabilir kurulumun köküne kopyala. `motor/` ve `runtime/` klasörlerini değiştirme. ZIP tek başına çalışmaz; üçüncü taraf motoru ve çalışma ortamını içermez.
+
+**Doğrulama:** Wine 11.22 altında `.exe`, GTK, boşluklu kurulum yolu, wrapper başlatma ve kapatma, eksik dosya uyarıları ve QEMU seri komut testi geçti. Gerçek Windows ve canlı Apple girişi/2FA doğrulanmadı.
+
 ## v0.1.1 — Giriş tanılama
 
 - Wrapper hazır sinyali vermezse veya giriş ilerlemezse arayüz artık süresiz beklemez. Wrapper doğrulama kodu için desteklenmeyen dosya moduna geçerse ayrı bir mesaj gösterilir.

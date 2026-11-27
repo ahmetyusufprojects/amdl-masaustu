@@ -10,6 +10,8 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
+import uuid
 from datetime import datetime, timezone
 import urllib.error
 import urllib.parse
@@ -30,7 +32,7 @@ LOGIN_EVENTS = {
 }
 SIGN_IN_EVENTS = frozenset(LOGIN_EVENTS.values()) | {
     'started', 'locked', 'qemu_started', 'credentials_sent', 'code_sent',
-    'boot_timeout', 'login_timeout', 'code_timeout', 'canceled', 'io_error', 'exited',
+    'boot_timeout', 'login_timeout', 'code_timeout', 'canceled', 'io_error', 'exited', 'component_missing',
 }
 
 
@@ -228,7 +230,16 @@ def qemu_home(runtime):
     return runtime / 'wrapper-lite' / 'qemu'
 
 
-def qemu_command(runtime, initrd):
+def missing_login_component(runtime, windows=WINDOWS):
+    suffix = '.exe' if windows else ''
+    for name in (f'bin/qemu-system-x86_64{suffix}', 'bin/bios-256k.bin',
+                 'lite-initramfs.cpio.gz', 'vmlinuz-lite-qemu', 'data.img'):
+        if not (qemu_home(runtime) / name).is_file():
+            return f'wrapper-lite/qemu/{name}'
+    return None
+
+
+def qemu_command(runtime, initrd, serial='stdio'):
     q = qemu_home(runtime)
     env = child_env(runtime)
     if not WINDOWS:
@@ -242,7 +253,7 @@ def qemu_command(runtime, initrd):
            '-accel', 'kvm' if kvm else 'tcg', '-cpu', 'host' if kvm else 'max',
            '-m', '512', '-smp', '2', '-kernel', str(q / 'vmlinuz-lite-qemu'),
            '-initrd', str(initrd), '-append', console, '-display', 'none', '-monitor', 'none',
-           '-serial', 'stdio', '-no-reboot', '-nic', 'user,model=e1000',
+           '-serial', serial, '-no-reboot', '-nic', 'user,model=e1000',
            '-blockdev', block, '-device', 'virtio-blk-pci,drive=amdl_disk']
     return cmd, env
 
@@ -274,6 +285,62 @@ def guest_payload(args):
     return payload
 
 
+class WindowsSerial:
+    """QEMU’nun çift yönlü borusunda okuma ve yazma birbirini beklemez."""
+    def __init__(self, handle):
+        self.handle = handle
+
+    def read1(self, size):
+        import _winapi
+        try:
+            operation, _ = _winapi.ReadFile(self.handle, size, True)
+            operation.GetOverlappedResult(True)
+            return operation.getbuffer()
+        except OSError as exc:
+            if exc.winerror not in (109, 232, 233):
+                raise
+            return b''
+
+    def write(self, data):
+        import _winapi
+        operation, _ = _winapi.WriteFile(self.handle, data, True)
+        count, error = operation.GetOverlappedResult(True)
+        if error or count != len(data):
+            raise OSError(error, 'QEMU serial write')
+        return count
+
+    def flush(self):
+        pass
+
+
+@contextmanager
+def windows_serial(proc, name):
+    import _winapi
+    import ctypes
+    from ctypes import wintypes
+
+    deadline = time.monotonic() + 15
+    while proc.poll() is None and time.monotonic() < deadline:
+        try:
+            handle = _winapi.CreateFile('\\\\.\\pipe\\' + name, 0xc0000000, 0, 0, 3, 0x40000000, 0)
+        except OSError as exc:
+            if exc.winerror not in (2, 231):
+                raise
+            time.sleep(.05)
+            continue
+        try:
+            pid = wintypes.ULONG()
+            get_pid = ctypes.WinDLL('kernel32', use_last_error=True).GetNamedPipeServerProcessId
+            get_pid.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.ULONG))
+            if not get_pid(handle, ctypes.byref(pid)) or pid.value != proc.pid:
+                raise OSError('QEMU serial server mismatch')
+            yield WindowsSerial(handle)
+        finally:
+            _winapi.CloseHandle(handle)
+        return
+    raise OSError('QEMU serial pipe not available')
+
+
 @contextmanager
 def login_process(runtime):
     with tempfile.TemporaryDirectory(prefix='amdl-login-') as temp:
@@ -281,10 +348,27 @@ def login_process(runtime):
         with (qemu_home(runtime) / 'lite-initramfs.cpio.gz').open('rb') as original, initrd.open('wb') as dst:
             shutil.copyfileobj(original, dst)
             dst.write(cpio_overlay({'amdl-login-init': LOGIN_INIT, 'amdl-login-shim': LOGIN_SHIM}))
-        cmd, env = qemu_command(runtime, initrd)
-        with subprocess.Popen(cmd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT, **process_options()) as proc:
-            try:
-                yield proc
-            finally:
-                cancel(proc)
+        if WINDOWS:
+            name = 'amdl-login-' + uuid.uuid4().hex
+            cmd, env = qemu_command(runtime, initrd, serial='pipe:' + name)
+            with subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL, **process_options()) as proc:
+                try:
+                    with windows_serial(proc, name) as stream:
+                        proc.stdin = proc.stdout = stream
+                        try:
+                            yield proc
+                        finally:
+                            cancel(proc)
+                            proc.wait()
+                            proc.stdin = proc.stdout = None
+                finally:
+                    cancel(proc)
+        else:
+            cmd, env = qemu_command(runtime, initrd)
+            with subprocess.Popen(cmd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, **process_options()) as proc:
+                try:
+                    yield proc
+                finally:
+                    cancel(proc)

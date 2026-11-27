@@ -77,7 +77,7 @@ def _zip_path(info):
 
 def unpack_wrapper(archive, target, windows):
     with tempfile.TemporaryDirectory(prefix='wrapper-') as scratch, zipfile.ZipFile(archive) as zip_:
-        extracted = Path(scratch) / 'files'
+        extracted = Path(scratch) / 'wrapper-lite'
         extracted.mkdir()
         seen = set()
         for info in zip_.infolist():
@@ -99,6 +99,11 @@ def unpack_wrapper(archive, target, windows):
             if not path.is_file():
                 raise ValueError(f'Wrapper çalıştırılabilir dosyası bulunamadı: {rel}')
             path.chmod(0o755)
+        from engine import missing_login_component
+
+        missing = missing_login_component(extracted.parent, windows)
+        if missing:
+            raise ValueError(f'Wrapper giriş bileşeni eksik: {missing}')
         (extracted / 'qemu/data.img').chmod(0o600)
         shutil.copytree(extracted, target)
 

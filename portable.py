@@ -10,17 +10,21 @@ def main():
     else:
         entry = Path(__file__).resolve().parent
         bundle = entry.parent if entry.name == 'app' else entry
-    if os.name == 'nt':
-        runtime = bundle / 'runtime'
-        os.environ['PATH'] = str(runtime / 'bin') + os.pathsep + os.environ.get('PATH', '')
-        os.environ['GI_TYPELIB_PATH'] = str(runtime / 'lib' / 'girepository-1.0')
-        os.environ['GSETTINGS_SCHEMA_DIR'] = str(runtime / 'share' / 'glib-2.0' / 'schemas')
-        os.environ['XDG_DATA_DIRS'] = str(runtime / 'share')
-        gtk_dlls = os.add_dll_directory(str(runtime / 'bin'))
-    else:
-        gtk_dlls = None
-    os.environ.setdefault('GSETTINGS_BACKEND', 'memory')
+    gtk_dlls = None
     try:
+        if os.name == 'nt':
+            runtime = bundle / 'runtime'
+            for rel in ('app/desktop.py', 'app/engine.py', 'app/settings.py',
+                        'runtime/bin/libgtk-4-1.dll', 'runtime/lib/girepository-1.0/Gtk-4.0.typelib',
+                        'runtime/share/glib-2.0/schemas/gschemas.compiled'):
+                if not (bundle / rel).is_file():
+                    raise FileNotFoundError(f'{rel} eksik. Arşivi tamamen çıkar. / Missing; extract the entire archive.')
+            os.environ['PATH'] = str(runtime / 'bin') + os.pathsep + os.environ.get('PATH', '')
+            os.environ['GI_TYPELIB_PATH'] = str(runtime / 'lib' / 'girepository-1.0')
+            os.environ['GSETTINGS_SCHEMA_DIR'] = str(runtime / 'share' / 'glib-2.0' / 'schemas')
+            os.environ['XDG_DATA_DIRS'] = str(runtime / 'share')
+            gtk_dlls = os.add_dll_directory(str(runtime / 'bin'))
+        os.environ.setdefault('GSETTINGS_BACKEND', 'memory')
         from desktop import main as run
         return run(default_runtime=bundle / 'motor')
     except Exception as exc:

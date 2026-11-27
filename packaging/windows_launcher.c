@@ -10,12 +10,13 @@ static size_t used;
 
 static int report(const wchar_t *message, DWORD error)
 {
-    wchar_t detail[512];
+    wchar_t detail[512], text[1024];
     if (error && FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                                NULL, error, 0, detail, 512, NULL))
-        MessageBoxW(NULL, detail, message, MB_OK | MB_ICONERROR);
-    else
-        MessageBoxW(NULL, message, L"AMDL", MB_OK | MB_ICONERROR);
+                                NULL, error, 0, detail, 512, NULL)) {
+        swprintf(text, sizeof text / sizeof *text, L"%ls\n\n%ls", message, detail);
+        MessageBoxW(NULL, text, L"amdl Masaüstü", MB_OK | MB_ICONERROR);
+    } else
+        MessageBoxW(NULL, message, L"amdl Masaüstü", MB_OK | MB_ICONERROR);
     return 1;
 }
 
@@ -110,8 +111,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR line, int show
     if (!bundle_path(python, L"runtime\\bin\\pythonw.exe") ||
         !bundle_path(script, L"app\\portable.py") || !setup_environment())
         return report(L"AMDL calisma ortami hazirlanamadi", GetLastError());
-    if (GetFileAttributesW(script) == INVALID_FILE_ATTRIBUTES)
-        return report(L"app\\portable.py bulunamadi", GetLastError());
+    DWORD attr = GetFileAttributesW(script);
+    if (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY))
+        return report(L"app\\portable.py eksik. Arşivi tamamen çıkar ve klasörü birlikte tut.\n"
+                      L"Extract the entire archive and keep the folder together.", 0);
+    attr = GetFileAttributesW(python);
+    if (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY))
+        return report(L"runtime\\bin\\pythonw.exe eksik. Güncelleme ZIP’i tek başına çalışmaz.\n"
+                      L"The update ZIP requires an existing full portable bundle.", 0);
 
     int argc;
     wchar_t **argv = CommandLineToArgvW(GetCommandLineW(), &argc);

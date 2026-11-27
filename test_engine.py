@@ -100,6 +100,20 @@ class Tests(unittest.TestCase):
         self.assertEqual(data[116:120], b'demo')
         self.assertIn(b'TRAILER!!!\0', data)
 
+    def test_login_component_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = Path(tmp)
+            qemu = engine.qemu_home(runtime)
+            (qemu / 'bin').mkdir(parents=True)
+            for name in ('bin/qemu-system-x86_64.exe', 'bin/bios-256k.bin',
+                         'lite-initramfs.cpio.gz', 'vmlinuz-lite-qemu', 'data.img'):
+                self.assertEqual(engine.missing_login_component(runtime, windows=True), f'wrapper-lite/qemu/{name}')
+                (qemu / name).touch()
+            self.assertIsNone(engine.missing_login_component(runtime, windows=True))
+            self.assertEqual(engine.missing_login_component(runtime, windows=False), 'wrapper-lite/qemu/bin/qemu-system-x86_64')
+            cmd, _ = engine.qemu_command(runtime, qemu / 'lite-initramfs.cpio.gz', serial='pipe:amdl-test')
+            self.assertEqual(cmd[cmd.index('-serial') + 1], 'pipe:amdl-test')
+
     def test_local_qemu_and_bundled_ffmpeg(self):
         with tempfile.TemporaryDirectory() as tmp:
             runtime = Path(tmp)

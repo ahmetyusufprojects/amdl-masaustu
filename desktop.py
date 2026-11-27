@@ -132,13 +132,15 @@ class App(Gtk.Application):
             assert self.progress.get_fraction() == 1
             if os.environ.get('AMDL_SMOKE_SERVICE') == '1':
                 self.check_connection(start=True)
-                GLib.timeout_add_seconds(10, self.finish_smoke)
+                GLib.timeout_add(250, self.finish_smoke)
             else:
                 GLib.idle_add(self.quit)
         else:
             self.window.present()
 
     def finish_smoke(self):
+        if self.account_busy:
+            return True
         if engine.status(engine.LOCAL) is None:
             self.smoke_failed = True
         self.close()
@@ -466,6 +468,13 @@ class App(Gtk.Application):
 
             log('started')
             msg = self.tr('Giriş doğrulanamadı. Hesap bilgilerini ve doğrulama kodunu kontrol et.', 'Sign-in could not be verified. Check your account details and verification code.')
+            missing = engine.missing_login_component(self.runtime)
+            if missing:
+                log('component_missing')
+                GLib.idle_add(self.finish_account, self.tr(
+                    f'Motor dosyası eksik: {missing}. Tam taşınabilir paketi yeniden çıkar.',
+                    f'Missing engine file: {missing}. Extract the entire portable bundle again.'))
+                return
             try:
                 self.release_service()
                 if self.closing:
@@ -549,11 +558,12 @@ class App(Gtk.Application):
     def submit_code(self, *_):
         code = self.code.get_text()
         proc = self.login
-        if proc is None or not re.fullmatch(r'[0-9]{6}', code):
+        stream = proc.stdin if proc else None
+        if stream is None or not re.fullmatch(r'[0-9]{6}', code):
             return
         try:
-            proc.stdin.write((code + '\n').encode())
-            proc.stdin.flush()
+            stream.write((code + '\n').encode())
+            stream.flush()
         except (OSError, ValueError):
             return
         engine.login_log(self.runtime, 'code_sent')
