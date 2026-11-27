@@ -1,4 +1,5 @@
 # Yerel oturum, yapılandırma, motorlar ve çıktılar
+/dist/
 config.y*ml
 ui.y*ml
 .env*

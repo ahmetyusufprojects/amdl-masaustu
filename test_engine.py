@@ -1,5 +1,7 @@
 """Hesap veya gerçek indirme kullanmayan testler."""
+import gzip
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import os
 from pathlib import Path
 import tempfile
 import threading
@@ -61,10 +63,31 @@ class Tests(unittest.TestCase):
                 server.shutdown()
                 thread.join()
 
-    def test_invalid_credentials_are_not_spawned(self):
-        for email, password in [('a:b', 'pw'), ('demo@example.invalid', 'pw\n')]:
+    def test_login_payload(self):
+        for email, password in [('a:b', 'pw'), ('demo@example.invalid', 'pw\n'), ('a', '\x03'), ('a', 'x' * 5000)]:
             with self.assertRaises(ValueError):
-                engine.login_process(Path('/'), email, password, -1)
+                engine.login_payload(email, password)
+        self.assertEqual(engine.login_payload('demo@example.invalid', ' a:b '),
+                         b'4\n--login\ndemo@example.invalid: a:b \n--base-dir\n/data\n')
+
+    def test_cpio_newc(self):
+        data = gzip.decompress(engine.cpio_overlay({'init': b'demo'}))
+        self.assertTrue(data.startswith(b'070701'))
+        self.assertEqual(int(data[6 + 6 * 8:6 + 7 * 8], 16), 4)
+        self.assertEqual(data[110:115], b'init\0')
+        self.assertEqual(data[116:120], b'demo')
+        self.assertIn(b'TRAILER!!!\0', data)
+
+    def test_local_qemu_and_bundled_ffmpeg(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = Path(tmp)
+            (runtime / 'bin').mkdir()
+            self.assertEqual(engine.child_env(runtime)['PATH'].split(os.pathsep)[0], str(runtime / 'bin'))
+            cmd = engine.service_command(runtime, 31415)
+            self.assertEqual(cmd[1:], ['--host', '127.0.0.1', '--host-port', '31415', '--guest-port', '12340'])
+            cmd, _ = engine.qemu_command(runtime, runtime / 'tmp.img')
+            self.assertNotIn('hostfwd', ' '.join(cmd))
+            self.assertIn('rdinit=/amdl-login-init', ' '.join(cmd))
 
 
 if __name__ == '__main__':

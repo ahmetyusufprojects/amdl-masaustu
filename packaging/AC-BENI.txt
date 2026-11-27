@@ -1,0 +1,30 @@
+amdl Masaüstü / amdl Desktop — Taşınabilir sürüm / Portable edition
+
+WINDOWS 10/11 (x64)
+ZIP dosyasını tamamen çıkar. Çıkan klasörde amdl-masaustu.exe dosyasına
+çift tıkla. Python, GTK, QEMU veya FFmpeg’i ayrıca kurman gerekmez.
+Bu çalıştırılabilir dosya imzalı değildir. Kaynağını ve SHA-256 özetini doğrula.
+
+LINUX (x86_64)
+.tar.gz arşivini tamamen çıkar. Çıkan klasörde amdl-masaustu dosyasını aç.
+GTK, QEMU ve FFmpeg klasöre dahildir. Modern bir Linux grafik oturumu gerekir.
+
+KULLANIM
+- Klasörü yazma iznin olan bir yere çıkar. Uygulama dosyasını klasörden ayırma.
+- Hesap sekmesinden giriş yap; Apple isterse doğrulama kodunu uygulamaya gir.
+- İndir sekmesine Apple Music bağlantısını ekle. Yerel servis gerektiğinde açılır.
+- Ayarlar > Kapak görselleri > Hareketli kapağı kaydet seçeneği için FFmpeg hazırdır.
+- Ayarlar, dil tercihi, hesap oturumu ve indirmeler motor klasöründe kalır.
+  Giriş yaptıktan sonra bu klasörü veya içindeki oturum diskini paylaşma.
+- Aynı anda tek bir yerel wrapper çalıştır. Bir başka kopya portu kullanıyorsa
+  o kopyayı kapatıp yeniden dene. Yalnızca indirme hakkın olan içerikleri indir.
+
+QUICK START
+Extract the entire archive to a writable folder, then open amdl-masaustu.exe
+on Windows or amdl-masaustu on Linux. Keep all of the files together.
+Sign in on Account, then paste an Apple Music link on Download. FFmpeg is
+included. Settings, downloads and the session disk stay under motor/. Do not
+share a folder that you have signed in to. The Windows executable is unsigned.
+
+Kaynak kodu / Source: https://github.com/ahmetyusufprojects/amdl-masaustu
+Bileşenler / Components: lisanslar/KAYNAKLAR.txt

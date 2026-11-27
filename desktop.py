@@ -2,10 +2,8 @@
 """GTK 4 indirme merkezi."""
 import argparse
 import codecs
-import fcntl
 import os
 from pathlib import Path
-import pty
 import re
 import shutil
 import signal
@@ -78,13 +76,13 @@ class App(Gtk.Application):
         self.runtime = args.runtime.resolve()
         self.config_file = self.runtime / 'config.yaml'
         self.smoke = args.smoke_test
-        self.prefs = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'amdl-masaustu' / 'ui.yaml'
+        self.prefs = (self.runtime / 'ui.yaml' if getattr(args, 'portable', False) else
+                      Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'amdl-masaustu' / 'ui.yaml')
         try:
             self.lang = 1 if engine.read_yaml(self.prefs).get('language') == 'en' else 0
         except (OSError, ValueError, engine.yaml.YAMLError):
             self.lang = 0
         self.proc = self.service = self.login = None
-        self.login_fd = None
         self.service_lock = None
         self.busy = self.account_busy = self.cancelled = self.closing = False
         self.signing_in = self.login_cancelled = False
@@ -240,7 +238,7 @@ class App(Gtk.Application):
         toolbar.append(self.settings_note)
         page.append(toolbar)
         ffmpeg = get(self.draft, 'convert.ffmpeg-path', 'ffmpeg')
-        if not isinstance(ffmpeg, str) or not shutil.which(ffmpeg):
+        if not isinstance(ffmpeg, str) or not shutil.which(ffmpeg, path=engine.child_env(self.runtime).get('PATH')):
             page.append(label(self.tr('FFmpeg bulunamadı. Dönüştürme ve hareketli kapak seçenekleri FFmpeg kurulana kadar çalışmaz.', 'FFmpeg not found. Conversion and motion artwork require FFmpeg.'), 'muted'))
         self.widgets = {}
         if self.config_error:
@@ -337,7 +335,7 @@ class App(Gtk.Application):
         page.append(actions)
         self.account_note = label('')
         page.append(self.account_note)
-        page.append(label(self.tr('Bu ekran Apple’a ait değildir; paketlenmiş wrapper hesabı doğrular. Parola ana makinede komut satırına yazılmaz, ancak wrapper misafir diskinde giriş argümanlarını ve oturum verilerini saklayabilir. Bu diski paylaşma.', 'This is not an Apple sign-in screen; the bundled wrapper verifies the account. The password is not put on the host command line, but the guest disk may retain sign-in arguments and session data. Do not share it.'), 'muted'))
+        page.append(label(self.tr('Bu ekran Apple’a ait değildir; hesabı üçüncü taraf wrapper doğrular. Arayüz parolayı komut satırına veya yapılandırmaya yazmaz. Wrapper oturum token’larını şifrelenmeden yerel diskte saklar; motor klasörünü paylaşma.', 'This is not an Apple sign-in screen; a third-party wrapper verifies the account. The UI does not write the password to the command line or configuration. The wrapper stores session tokens unencrypted. Do not share the engine folder.'), 'muted'))
         return page
 
     def help_page(self):
@@ -374,32 +372,19 @@ class App(Gtk.Application):
     def saved(self):
         return engine.read_yaml(self.config_file)
 
-    def lock_runtime(self):
-        lock = (self.runtime / 'wrapper-lite' / '.oturum.lock').open('a')
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            lock.close()
-            raise
-        return lock
-
     def ensure_service(self, endpoint, start=True):
         regions = engine.status(endpoint)
         if regions is not None or not start or endpoint.rstrip('/') != engine.LOCAL:
             return regions
-        lock = self.lock_runtime()
+        lock = engine.lock_runtime(self.runtime)
         try:
-            port = engine.LOCAL.rsplit(':', 1)[1]
-            p = subprocess.Popen([str(self.runtime / 'wrapper-lite' / 'wrapper-lite-qemu'),
-                                  '--host', '127.0.0.1', '--host-port', port, '--guest-port', '12340'],
-                                 cwd=self.runtime, start_new_session=True, env=engine.child_env(),
-                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                 pass_fds=(lock.fileno(),))
+            p = engine.start_service(self.runtime, engine.LOCAL.rsplit(':', 1)[1], lock)
         except OSError:
             lock.close()
             raise
         self.service, self.service_lock = p, lock
-        for _ in range(32):
+        deadline = time.monotonic() + 40
+        while time.monotonic() < deadline:
             if self.closing or self.cancelled or p.poll() is not None:
                 break
             regions = engine.status(endpoint)
@@ -412,7 +397,12 @@ class App(Gtk.Application):
     def release_service(self):
         p, lock = self.service, self.service_lock
         self.service = self.service_lock = None
-        engine.cancel(p)
+        engine.cancel(p, tree=True)
+        if p:
+            try:
+                p.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                p.kill()
         if lock:
             lock.close()
 
@@ -445,8 +435,10 @@ class App(Gtk.Application):
         if self.busy or self.account_busy:
             return
         email, password = self.email.get_text().strip(), self.password.get_text()
-        if not email or not password:
-            self.account_note.set_text(self.tr('E-posta ve parola gir.', 'Enter your email and password.'))
+        try:
+            payload = engine.login_payload(email, password)
+        except ValueError:
+            self.account_note.set_text(self.tr('Geçerli bir e-posta ve parola gir.', 'Enter a valid email and password.'))
             return
         self.password.set_text('')
         self.account_busy = self.signing_in = True
@@ -454,43 +446,34 @@ class App(Gtk.Application):
         self.update_controls()
         self.account_note.set_text(self.tr('Apple hesabı doğrulanıyor…', 'Verifying Apple Account…'))
         def worker():
-            master = None
             try:
-                service = self.service
                 self.release_service()
-                if service:
-                    service.wait(timeout=4)
                 if self.closing:
                     return
-                with self.lock_runtime():
-                    master, slave = pty.openpty()
-                    try:
-                        self.login = engine.login_process(self.runtime, email, password, slave)
-                    finally:
-                        os.close(slave)
-                    self.login_fd = master
+                with engine.lock_runtime(self.runtime), engine.login_process(self.runtime) as proc:
+                    self.login = proc
                     if self.closing or self.login_cancelled:
-                        engine.cancel(self.login)
-                    cached = False
-                    code_requests = 0
-                    text = ''
-                    while not self.closing:
-                        try:
-                            chunk = os.read(master, 4096)
-                        except OSError:
-                            break
+                        engine.cancel(proc)
+                    cached = sent = False
+                    text = b''
+                    while not self.closing and not self.login_cancelled:
+                        chunk = proc.stdout.read1(4096)
                         if not chunk:
                             break
-                        text += chunk.decode(errors='replace')
-                        prompts = text.count('2FA code:')
-                        if prompts > code_requests:
-                            code_requests = prompts
-                            GLib.idle_add(self.show_code)
-                        cached |= 'account info cached successfully' in text
-                        if 'Enter your 2FA code into' in text:
-                            engine.cancel(self.login)
+                        text += chunk
+                        if not sent and engine.LOGIN_READY in text:
+                            proc.stdin.write(payload)
+                            proc.stdin.flush()
+                            sent = True
+                        cached |= b'account info cached successfully' in text
+                        if b'Enter your 2FA code into' in text:
+                            engine.cancel(proc)
                             break
-                    rc = self.login.wait()
+                        if b'2FA code:' in text:
+                            text = text.rsplit(b'2FA code:', 1)[-1]
+                            GLib.idle_add(self.show_code)
+                        text = text[-256:]
+                    rc = proc.wait(timeout=5)
                 if cached and rc == 0:
                     msg = self.tr('Giriş başarılı. Şimdi indirmeyi başlatabilir veya bağlantıyı denetleyebilirsin.', 'Sign-in succeeded. Start a download or check the connection.')
                 else:
@@ -498,10 +481,7 @@ class App(Gtk.Application):
             except (OSError, ValueError, subprocess.TimeoutExpired):
                 msg = self.tr('Giriş başlatılamadı. Başka bir wrapper işlemini kapatıp yeniden dene.', 'Could not start sign-in. Stop any other wrapper process and retry.')
             finally:
-                self.login_fd = None
                 self.login = None
-                if master is not None:
-                    os.close(master)
             GLib.idle_add(self.finish_account, msg)
         threading.Thread(target=worker, daemon=True).start()
 
@@ -520,11 +500,13 @@ class App(Gtk.Application):
 
     def submit_code(self, *_):
         code = self.code.get_text()
-        if self.login_fd is None or not re.fullmatch(r'[0-9]{6}', code):
+        proc = self.login
+        if proc is None or not re.fullmatch(r'[0-9]{6}', code):
             return
         try:
-            os.write(self.login_fd, (code + '\n').encode())
-        except OSError:
+            proc.stdin.write((code + '\n').encode())
+            proc.stdin.flush()
+        except (OSError, ValueError):
             return
         self.code.set_text('')
         self.code_row.set_visible(False)
@@ -543,7 +525,11 @@ class App(Gtk.Application):
         key = ('alac', 'atmos', 'aac')[self.mode.get_selected()]
         try:
             folder = self.runtime / str(get(self.saved(), 'paths.' + key, {'alac': 'AM-Lossless', 'atmos': 'AM-Atmos', 'aac': 'AM-AAC'}[key]))
-            Gio.AppInfo.launch_default_for_uri((folder if folder.is_dir() else self.runtime).as_uri())
+            folder = folder if folder.is_dir() else self.runtime
+            if engine.WINDOWS:
+                os.startfile(folder)
+            else:
+                Gio.AppInfo.launch_default_for_uri(folder.as_uri())
         except (OSError, ValueError, GLib.Error, engine.yaml.YAMLError):
             self.download_note.set_text(self.tr('Çıktı klasörü açılamadı.', 'Could not open the output folder.'))
 
@@ -561,7 +547,7 @@ class App(Gtk.Application):
             self.download_note.set_text(self.tr('Yapılandırma okunamadı.', 'Could not read configuration.'))
             return
         endpoint = str(get(config, 'general.lite-server', engine.LOCAL))
-        args = [str(self.runtime / 'amdl'), '--config', str(self.config_file), '--lite-server', endpoint]
+        args = [str(engine.binary(self.runtime, 'amdl')), '--config', str(self.config_file), '--lite-server', endpoint]
         mode = self.mode.get_selected()
         if mode:
             args.append(('--atmos', '--aac')[mode - 1])
@@ -593,11 +579,11 @@ class App(Gtk.Application):
             if not regions:
                 failure = self.tr('Hesap sekmesinde servis bağlantısını ve Apple oturumunu denetle.', 'Check the service connection and Apple session on the Account tab.')
             elif not self.cancelled and not self.closing:
-                with subprocess.Popen(args, cwd=self.runtime, env=engine.child_env(), stdin=subprocess.PIPE,
-                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True) as proc:
+                with subprocess.Popen(args, cwd=self.runtime, env=engine.child_env(self.runtime), stdin=subprocess.PIPE,
+                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **engine.process_options()) as proc:
                     self.proc = proc
                     if self.cancelled or self.closing:
-                        engine.cancel(proc)
+                        engine.cancel(proc, tree=True)
                     decoder = codecs.getincrementaldecoder('utf-8')('replace')
                     pending = ''
                     while True:
@@ -655,7 +641,7 @@ class App(Gtk.Application):
 
     def stop_download(self, *_):
         self.cancelled = True
-        engine.cancel(self.proc)
+        engine.cancel(self.proc, tree=True)
         self.progress.set_text(self.tr('İptal ediliyor…', 'Canceling…'))
 
     def finish_download(self, summary, failure):
@@ -676,19 +662,20 @@ class App(Gtk.Application):
 
     def close(self, *_):
         self.closing = self.cancelled = True
-        engine.cancel(self.proc)
+        engine.cancel(self.proc, tree=True)
         engine.cancel(self.login)
         self.release_service()
         return False
 
 
-def main():
+def main(default_runtime=None):
     os.umask(0o077)
     parser = argparse.ArgumentParser()
-    default = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local/share')) / 'amdl-masaustu' / 'motor'
+    default = default_runtime or Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local/share')) / 'amdl-masaustu' / 'motor'
     parser.add_argument('--runtime', type=Path, default=default)
     parser.add_argument('--smoke-test', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
+    args.portable = default_runtime is not None
     app = App(args)
     signal.signal(signal.SIGTERM, lambda *_: GLib.idle_add(app.window.close) if hasattr(app, 'window') else None)
     result = app.run([])
