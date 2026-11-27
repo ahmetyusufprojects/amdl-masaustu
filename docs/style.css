@@ -1,0 +1,56 @@
+:root {
+  color-scheme: light;
+  --bg: #f4f7fb;
+  --surface: #fff;
+  --ink: #142038;
+  --muted: #46556c;
+  --border: #c4cedd;
+  --accent: #184b9b;
+  --button-ink: #fff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #111827;
+    --surface: #1d283b;
+    --ink: #f2f5fc;
+    --muted: #bfcce1;
+    --border: #4e607a;
+    --accent: #a6caff;
+    --button-ink: #101d33;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #111827;
+  --surface: #1d283b;
+  --ink: #f2f5fc;
+  --muted: #bfcce1;
+  --border: #4e607a;
+  --accent: #a6caff;
+  --button-ink: #101d33;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 1rem/1.6 system-ui, sans-serif; }
+a { color: var(--accent); text-underline-offset: .2em; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+.shell { width: min(68rem, calc(100% - 2rem)); margin-inline: auto; }
+.top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-block: 1rem; border-bottom: 1px solid var(--border); }
+.brand { font-weight: 750; color: var(--ink); }
+select { margin-inline-start: .35rem; padding: .35rem; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: .4rem; font: inherit; }
+.hero { padding-block: clamp(2rem, 7vw, 5rem); }
+.eyebrow { color: var(--accent); font-size: .8rem; font-weight: 750; letter-spacing: .08em; }
+h1 { font-size: clamp(2.2rem, 6vw, 4.5rem); line-height: 1.08; letter-spacing: -.035em; margin-block: .35em; max-width: 18ch; }
+h2 { font-size: 1.22rem; margin: 0 0 .5rem; }
+p { margin: 0; color: var(--muted); }
+.hero > p { max-width: 62ch; }
+.actions { display: flex; flex-wrap: wrap; gap: .7rem; margin-top: 1.5rem; }
+.button { display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: .6rem; padding: .6rem 1rem; font-weight: 650; }
+.primary { background: var(--accent); color: var(--button-ink); border-color: var(--accent); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: 1rem; }
+article, .notice { background: var(--surface); border: 1px solid var(--border); border-radius: .85rem; padding: 1.25rem; }
+.notice { margin-top: 1rem; }
+footer { padding-block: 1.5rem; color: var(--muted); }
