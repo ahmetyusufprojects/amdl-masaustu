@@ -10,6 +10,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -19,6 +20,51 @@ import yaml
 LOCAL = 'http://127.0.0.1:12340'
 WINDOWS = os.name == 'nt'
 LOGIN_READY = b'AMDL_LOGIN_READY'
+LOGIN_EVENTS = {
+    LOGIN_READY: 'guest_ready',
+    b'2FA code:': 'code_requested',
+    b'Enter your 2FA code into': 'unsupported_code_mode',
+    b'account info cached successfully': 'session_cached',
+    b'login failed': 'upstream_rejected',
+    b'data disk mount failed': 'guest_disk_mount_failed',
+}
+SIGN_IN_EVENTS = frozenset(LOGIN_EVENTS.values()) | {
+    'started', 'locked', 'qemu_started', 'credentials_sent', 'code_sent',
+    'boot_timeout', 'login_timeout', 'code_timeout', 'canceled', 'io_error', 'exited',
+}
+
+
+class LoginOutput:
+    """Ham metni tutmadan parçalanmış giriş işaretlerini tanır."""
+    def __init__(self):
+        self.tail = b''
+        self.seen = set()
+
+    def feed(self, chunk):
+        text = self.tail + chunk
+        self.tail = text[-(max(map(len, LOGIN_EVENTS)) - 1):]
+        events = [event for marker, event in LOGIN_EVENTS.items() if marker in text and event not in self.seen]
+        self.seen.update(events)
+        return events
+
+
+def login_log(runtime, event, number=None):
+    if event not in SIGN_IN_EVENTS or (number is not None and type(number) is not int):
+        raise ValueError('login event')
+    try:
+        if event == 'started':
+            mode = 'w'
+        else:
+            mode = 'a'
+        with (runtime / 'giris-tani.log').open(mode, encoding='utf-8') as stream:
+            stamp = datetime.now(timezone.utc).isoformat(timespec='seconds')
+            system = 'windows' if WINDOWS else 'linux'
+            suffix = '' if number is None else f' {number}'
+            stream.write(f'{stamp} {system} {event}{suffix}\n')
+    except OSError:
+        pass
+
+
 LOGIN_INIT = b'''#!/bin/busybox sh
 /bin/busybox mv /system/bin/lite /system/bin/lite-original || exit 1
 /bin/busybox mv /amdl-login-shim /system/bin/lite || exit 1
@@ -27,7 +73,7 @@ exec /init
 LOGIN_SHIM = b'''#!/bin/busybox sh
 umask 077
 exec </dev/ttyS0 >/dev/ttyS0 2>&1
-/bin/busybox stty -echo 2>/dev/null
+/bin/busybox stty -echo -echonl -ixon -ixoff 2>/dev/null || exit 1
 printf 'AMDL_LOGIN_READY\\n'
 if IFS= read -r count; then
     case "$count" in

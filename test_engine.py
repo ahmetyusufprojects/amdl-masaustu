@@ -70,6 +70,28 @@ class Tests(unittest.TestCase):
         self.assertEqual(engine.login_payload('demo@example.invalid', ' a:b '),
                          b'4\n--login\ndemo@example.invalid: a:b \n--base-dir\n/data\n')
 
+    def test_login_output_split_and_deduplicated(self):
+        output = engine.LoginOutput()
+        self.assertEqual(output.feed(b'noise AMDL_LOGIN_'), [])
+        self.assertEqual(output.feed(b'READY\n2FA co'), ['guest_ready'])
+        self.assertEqual(output.feed(b'de: '), ['code_requested'])
+        self.assertEqual(output.feed(b'2FA code: account info cached successfully'), ['session_cached'])
+        self.assertEqual(output.feed(b'Enter your 2FA code into /data/2fa.txt'), ['unsupported_code_mode'])
+        self.assertEqual(output.feed(b'data disk mount failed'), ['guest_disk_mount_failed'])
+
+    def test_login_diagnostics_only_store_known_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            engine.login_log(path, 'started')
+            for event, detail in [('secret@example.invalid', None), ('code_sent', '123456')]:
+                with self.assertRaises(ValueError):
+                    engine.login_log(path, event, detail)
+            engine.login_log(path, 'exited', 1)
+            log = path / 'giris-tani.log'
+            self.assertEqual([line.split(maxsplit=2)[-1] for line in log.read_text().splitlines()], ['started', 'exited 1'])
+            engine.login_log(path, 'started')
+            self.assertNotIn('exited', log.read_text())
+
     def test_cpio_newc(self):
         data = gzip.decompress(engine.cpio_overlay({'init': b'demo'}))
         self.assertTrue(data.startswith(b'070701'))

@@ -4,6 +4,7 @@ import argparse
 import codecs
 import os
 from pathlib import Path
+import queue
 import re
 import shutil
 import signal
@@ -335,6 +336,9 @@ class App(Gtk.Application):
         page.append(actions)
         self.account_note = label('')
         page.append(self.account_note)
+        diagnostics = button(self.tr('Giriş tanılama kaydını aç', 'Open sign-in diagnostic log'), self.open_login_log)
+        diagnostics.set_halign(Gtk.Align.START)
+        page.append(diagnostics)
         page.append(label(self.tr('Bu ekran Apple’a ait değildir; hesabı üçüncü taraf wrapper doğrular. Arayüz parolayı komut satırına veya yapılandırmaya yazmaz. Wrapper oturum token’larını şifrelenmeden yerel diskte saklar; motor klasörünü paylaşma.', 'This is not an Apple sign-in screen; a third-party wrapper verifies the account. The UI does not write the password to the command line or configuration. The wrapper stores session tokens unencrypted. Do not share the engine folder.'), 'muted'))
         return page
 
@@ -446,44 +450,88 @@ class App(Gtk.Application):
         self.update_controls()
         self.account_note.set_text(self.tr('Apple hesabı doğrulanıyor…', 'Verifying Apple Account…'))
         def worker():
+            def log(event, number=None):
+                engine.login_log(self.runtime, event, number)
+
+            def read_events(stream, events):
+                output = engine.LoginOutput()
+                try:
+                    while chunk := stream.read1(4096):
+                        for event in output.feed(chunk):
+                            events.put(event)
+                except (OSError, ValueError):
+                    events.put('io_error')
+                finally:
+                    events.put(None)
+
+            log('started')
+            msg = self.tr('Giriş doğrulanamadı. Hesap bilgilerini ve doğrulama kodunu kontrol et.', 'Sign-in could not be verified. Check your account details and verification code.')
             try:
                 self.release_service()
                 if self.closing:
                     return
-                with engine.lock_runtime(self.runtime), engine.login_process(self.runtime) as proc:
-                    self.login = proc
-                    if self.closing or self.login_cancelled:
-                        engine.cancel(proc)
-                    cached = sent = False
-                    text = b''
-                    while not self.closing and not self.login_cancelled:
-                        chunk = proc.stdout.read1(4096)
-                        if not chunk:
-                            break
-                        text += chunk
-                        if not sent and engine.LOGIN_READY in text:
-                            proc.stdin.write(payload)
-                            proc.stdin.flush()
-                            sent = True
-                        cached |= b'account info cached successfully' in text
-                        if b'Enter your 2FA code into' in text:
-                            engine.cancel(proc)
-                            break
-                        if b'2FA code:' in text:
-                            text = text.rsplit(b'2FA code:', 1)[-1]
-                            GLib.idle_add(self.show_code)
-                        text = text[-256:]
-                    rc = proc.wait(timeout=5)
-                if cached and rc == 0:
-                    msg = self.tr('Giriş başarılı. Şimdi indirmeyi başlatabilir veya bağlantıyı denetleyebilirsin.', 'Sign-in succeeded. Start a download or check the connection.')
-                else:
-                    msg = self.tr('Giriş doğrulanamadı. Hesap bilgilerini ve doğrulama kodunu kontrol et.', 'Sign-in could not be verified. Check your account details and verification code.')
-            except (OSError, ValueError, subprocess.TimeoutExpired):
-                msg = self.tr('Giriş başlatılamadı. Başka bir wrapper işlemini kapatıp yeniden dene.', 'Could not start sign-in. Stop any other wrapper process and retry.')
+                with engine.lock_runtime(self.runtime):
+                    log('locked')
+                    with engine.login_process(self.runtime) as proc:
+                        self.login = proc
+                        log('qemu_started')
+                        events = queue.Queue()
+                        threading.Thread(target=read_events, args=(proc.stdout, events), daemon=True).start()
+                        cached = False
+                        timeout = 'boot_timeout'
+                        deadline = time.monotonic() + 120
+                        while not self.closing and not self.login_cancelled:
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                log(timeout)
+                                msg = self.tr('Giriş yanıtı zaman aşımına uğradı. Tanılama kaydını kontrol et.', 'Sign-in timed out. Check the diagnostic log.')
+                                break
+                            try:
+                                event = events.get(timeout=min(remaining, .25))
+                            except queue.Empty:
+                                continue
+                            if event is None:
+                                rc = proc.wait(timeout=5)
+                                log('exited', rc)
+                                if cached and rc == 0:
+                                    msg = self.tr('Giriş başarılı. Şimdi indirmeyi başlatabilir veya bağlantıyı denetleyebilirsin.', 'Sign-in succeeded. Start a download or check the connection.')
+                                break
+                            log(event)
+                            if event == 'guest_ready':
+                                proc.stdin.write(payload)
+                                proc.stdin.flush()
+                                log('credentials_sent')
+                                timeout, deadline = 'login_timeout', time.monotonic() + 180
+                            elif event == 'session_cached':
+                                cached = True
+                            elif event == 'code_requested':
+                                timeout, deadline = 'code_timeout', time.monotonic() + 600
+                                GLib.idle_add(self.show_code)
+                            elif event == 'unsupported_code_mode':
+                                msg = self.tr('Wrapper doğrulama kodunu seri bağlantıdan kabul etmedi. Tanılama kaydını kontrol et.', 'The wrapper did not accept the verification code via serial input. Check the diagnostic log.')
+                                break
+            except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+                code = getattr(exc, 'winerror', None) or getattr(exc, 'errno', None)
+                log('io_error', code)
+                msg = self.tr('Giriş başlatılamadı veya bağlantı kesildi. Tanılama kaydını kontrol et.', 'Sign-in could not start or the connection closed. Check the diagnostic log.')
             finally:
+                if self.login_cancelled or self.closing:
+                    log('canceled')
                 self.login = None
             GLib.idle_add(self.finish_account, msg)
         threading.Thread(target=worker, daemon=True).start()
+
+    def open_login_log(self, *_):
+        path = self.runtime / 'giris-tani.log'
+        try:
+            if not path.is_file():
+                self.account_note.set_text(self.tr('Henüz tanılama kaydı yok. Önce giriş yapmayı dene.', 'No diagnostic log yet. Try signing in first.'))
+            elif engine.WINDOWS:
+                os.startfile(path)
+            else:
+                Gio.AppInfo.launch_default_for_uri(path.as_uri())
+        except (OSError, GLib.Error):
+            self.account_note.set_text(self.tr('Tanılama kaydı açılamadı.', 'Could not open the diagnostic log.'))
 
     def cancel_login(self, *_):
         self.login_cancelled = True
@@ -508,6 +556,7 @@ class App(Gtk.Application):
             proc.stdin.flush()
         except (OSError, ValueError):
             return
+        engine.login_log(self.runtime, 'code_sent')
         self.code.set_text('')
         self.code_row.set_visible(False)
         self.account_note.set_text(self.tr('Kod gönderildi…', 'Code submitted…'))

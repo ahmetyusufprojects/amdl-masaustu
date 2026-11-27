@@ -1,5 +1,13 @@
 # Sürüm notları
 
+## v0.1.1 — Giriş tanılama
+
+- Wrapper hazır sinyali vermezse veya giriş ilerlemezse arayüz artık süresiz beklemez. Wrapper doğrulama kodu için desteklenmeyen dosya moduna geçerse ayrı bir mesaj gösterilir.
+- **Hesap → Giriş tanılama kaydını aç** son giriş denemesinin aşamalarını gösterir. Dosyada parola, e-posta, token, doğrulama kodu veya ham wrapper çıktısı bulunmaz.
+- Windows güncelleme ZIP’i, mevcut taşınabilir uygulamanın arayüzünü günceller; motor ve GTK/Python runtime içermez. Tam taşınabilir paketler, `amdl` motorunun yeniden dağıtım izni doğrulanmadığından yalnızca yerelde üretilir.
+
+**Doğrulama:** Birim testleri ve Linux üzerinde gerçek QEMU misafirine kimlik bilgisi içermeyen seri komut gönderme testi geçti. Windows’ta gerçek Apple girişi doğrulanmadı.
+
 ## v0.1.0 — İlk kaynak sürümü
 
 - Windows ve Linux için Türkçe/İngilizce GTK 4 arayüzü: indirme kuyruğu, etkin parça göstergesi ve `amdl` v0.1.4 için 53 açıklamalı ayar.

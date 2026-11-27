@@ -6,7 +6,9 @@
 
 ## Taşınabilir paket
 
-GitHub Releases yalnızca bu projenin kaynak kodunu sunar. `amdl` motorunun yeniden dağıtım izni doğrulanmadığı için motoru içeren ZIP ve TAR.GZ dosyaları yayımlanmaz. Aşağıdaki yönergeler [yerelde üretilen paketler](#geliştirme--development) içindir.
+GitHub Releases kaynak kodunu ve mevcut Windows taşınabilir kurulumları için motor içermeyen arayüz güncellemesini sunar. `amdl` motorunun yeniden dağıtım izni doğrulanmadığı için tam ZIP ve TAR.GZ dosyaları yayımlanmaz. Aşağıdaki yönergeler [yerelde üretilen paketler](#geliştirme--development) içindir.
+
+**Mevcut Windows paketini güncellemek için:** Uygulamayı kapat, güncelleme ZIP’ini çıkar ve içindeki `app` klasörü ile `amdl-masaustu.exe` dosyasını mevcut paketin köküne kopyala; aynı adlı dosyaları değiştir. `motor/` ve `runtime/` olduğu gibi kalır. Tekrar sorun yaşarsan **Hesap → Giriş tanılama kaydını aç**. `motor/giris-tani.log` yalnızca son denemenin aşamalarını ve hata kodunu tutar; ham çıktı veya hesap bilgileri yazılmaz.
 
 | Sistem | Arşivi tamamen çıkardıktan sonra |
 | --- | --- |
@@ -59,7 +61,7 @@ Dönüştürme ve hareketli kapak için ayrıca `sudo apt install ffmpeg`. Temel
 
 A bilingual GTK 4 Windows and Linux frontend for the [amdl](https://github.com/zhaarey/apple-music-downloader) engine and [wrapper-lite](https://github.com/WorldObservationLog/wrapper/tree/lite). It queues links, tracks active download progress in the header, and exposes the v0.1.4 YAML settings in a categorized interface. It is not a streaming player.
 
-**Portable.** GitHub Releases provides source code only. Build the portable archives locally using the instructions below; the bundled engine has no verified redistribution license. Extract the archive for your platform to a writable folder. Open `amdl-masaustu.exe` on Windows 10/11 x64 or `amdl-masaustu` on Linux x86_64. Keep the whole folder together. Python, GTK, QEMU and FFmpeg are included. The Windows launcher is unsigned. The Linux build uses Ubuntu 24.04 as its baseline and requires a compatible Wayland or X11 environment. Local data lives under `motor/`.
+**Portable.** GitHub Releases provides source code and an engine-free update for existing Windows installations. Close the app and copy `app/` and `amdl-masaustu.exe` from the update ZIP into the existing bundle. For full portable archives, build locally using the instructions below; the bundled engine has no verified redistribution license. Extract the archive for your platform to a writable folder. Open `amdl-masaustu.exe` on Windows 10/11 x64 or `amdl-masaustu` on Linux x86_64. Keep the whole folder together. Python, GTK, QEMU and FFmpeg are included. The Windows launcher is unsigned. The Linux build uses Ubuntu 24.04 as its baseline and requires a compatible Wayland or X11 environment. Local data lives under `motor/`.
 
 **Optional Linux menu shortcut.** On Ubuntu/Debian: `sudo apt install python3-gi gir1.2-gtk-4.0 python3-yaml`. From the checkout run `/usr/bin/python3 -Es install.py --runtime /absolute/engine/path`, or `/usr/bin/python3 -Es install.py --fetch` to download SHA‑256-checked Linux x86_64 dependencies (authenticated GitHub CLI required). If the upstream Actions artifact expires, obtain a compatible QEMU bundle upstream and use `--runtime`. Launch **amdl Desktop** from the application menu. FFmpeg is optional unless you enable conversion or motion artwork.
 
